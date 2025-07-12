@@ -1,0 +1,55 @@
+# .gcloudignore
+
+# This file prevents unnecessary files from being uploaded to Google Cloud.
+# For this project, its contents are the same as .dockerignore.
+
+# Git metadata
+.git/
+.gitignore
+
+# Docker and Cloud specific files
+Dockerfile
+.dockerignore
+.gcloudignore
+docker-compose*.yml
+
+# Python specific
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Application-generated temporary files
+temp_files/
+
+# IDE and editor configuration
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS specific
+.DS_Store
+
+# Environment variables file
+.env
+
+# Build and distribution artifacts
+build/
+dist/
+
+# Documentation
+*.md
+
+# Logs and databases
+*.log
+*.sqlite3

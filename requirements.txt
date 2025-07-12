@@ -2,3 +2,4 @@ Flask==2.3.2
 Biopython==1.81
 Werkzeug==2.3.7
 Flask-Cors==4.0.0
+Gunicorn 

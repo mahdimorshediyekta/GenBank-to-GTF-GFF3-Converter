@@ -1,11 +1,13 @@
 # main.py
 from flask import Flask, request, send_file, jsonify
+from flask_cors import CORS 
 import os
 import tempfile
 from converter_logic import convert_genbank_to_annotation_format
 import logging
 
 app = Flask(__name__)
+CORS(app) # Enable CORS for all origins, or specify origins: CORS(app, resources={r"/convert": {"origins": "https://sciencecodons.com"}})
 logging.basicConfig(level=logging.INFO) # Ensure logging is configured for Flask
 
 @app.route('/convert', methods=['POST'])

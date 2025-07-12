@@ -1,3 +1,4 @@
+# main.py - This will be your primary backend file for Google Cloud Run
 import os
 import sys
 import tempfile
@@ -16,7 +17,6 @@ app = Flask(__name__)
 # Explicitly allow CORS from your frontend domain
 CORS(app, resources={r"/convert": {"origins": "https://sciencecodons.com"},
                      r"/health": {"origins": "https://sciencecodons.com"}})
-
 
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024 # 100 MB limit
 
@@ -381,7 +381,7 @@ def _process_feature_gff3(
                 attributes.append(f'{qual_key}={_format_gff3_attribute_value(qual_values[0])}')
 
     gff3_attributes_str = ";".join(attributes)
-    output_line = f"{seqname}\t{gff3_source}\t{gff3_feature_type_output}\t{start}\t{end}\t{score}\t{strand_char}\t{frame}\t{gff3_attributes_str}\n"
+    output_line = f"{seqname}\tGenbank\t{gff3_feature_type_output}\t{start}\t{end}\t{score}\t{strand_char}\t{frame}\t{gff3_attributes_str}\n"
     return output_line, cumulative_cds_length
 
 
@@ -736,4 +736,3 @@ def health_check():
 if __name__ == '__main__':
     # For local testing, use a port, e.g., 8080. Cloud Run will set PORT env var.
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
-

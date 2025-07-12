@@ -1,11 +1,13 @@
-# main.py
+# main.py (CORS fix)
 from flask import Flask, request, send_file, jsonify
+from flask_cors import CORS
 import os
 import tempfile
 from werkzeug.utils import secure_filename
 from app import convert_genbank_to_annotation_format
 
 app = Flask(__name__)
+CORS(app)  # This enables CORS for all routes
 
 @app.route("/convert", methods=["POST"])
 def convert():

@@ -191,13 +191,15 @@ def _process_feature_gtf(
     if genbank_gene_qual:
         attributes.append(f'gene_name "{genbank_gene_qual}"')
     if genbank_product_qual:
-        attributes.append(f'product "{genbank_product_qual.replace('"', '""')}"')
+        # FIX: Escape inner quotes properly for f-string
+        attributes.append(f'product "{genbank_product_qual.replace(\'"\', \'""\')}"')
     if current_genbank_feature_type == "CDS" and genbank_protein_id_qual:
         attributes.append(f'protein_id "{genbank_protein_id_qual}"')
     if common_ids["pseudo"]:
         attributes.append(f'pseudo "true"')
     if common_ids["exception"]:
-        attributes.append(f'exception "{common_ids["exception"].replace('"', '""')}"')
+        # FIX: Escape inner quotes properly for f-string
+        attributes.append(f'exception "{common_ids["exception"].replace(\'"\', \'""\')}"')
     if common_ids["transl_table"] and current_genbank_feature_type == "CDS":
         attributes.append(f'transl_table "{common_ids["transl_table"]}"')
 

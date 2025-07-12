@@ -5,7 +5,7 @@ FROM python:3.9-slim-buster
 WORKDIR /app
 
 # Install Biopython
-RUN pip install biopython gunicorn flask-cors flask
+RUN pip install biopython gunicorn flask flask-cors # Ensure flask-cors is here
 
 # Copy the current directory contents into the container at /app
 COPY . /app

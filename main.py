@@ -1,39 +1,15 @@
-# main.py - This will be your primary backend file for Google Cloud Run
-import os
 import sys
-import tempfile
-import logging
-from flask import Flask, request, jsonify, send_file
-from werkzeug.utils import secure_filename
+import os
 from Bio import SeqIO
 from Bio.SeqFeature import FeatureLocation, CompoundLocation
+import logging
 from urllib.parse import quote
-from flask_cors import CORS # Import CORS
+from flask import Flask, request, jsonify # Import Flask
 
 # Configure logging for better feedback
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
-app = Flask(__name__)
-# Explicitly allow CORS from your frontend domain
-# Ensure that 'https://sciencecodons.com' is the exact origin.
-# If you have other subdomains or test environments, you might need to add them.
-CORS(app, resources={r"/convert": {"origins": "https://sciencecodons.com"},
-                     r"/health": {"origins": "https://sciencecodons.com"}})
-
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024 # 100 MB limit
-
-# Ensure a temporary directory exists (Cloud Run typically provides /tmp)
-UPLOAD_FOLDER = tempfile.gettempdir()
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-ALLOWED_EXTENSIONS = {'gb', 'genbank', 'gbk'}
-
-def allowed_file(filename):
-    """Checks if the file extension is allowed."""
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-# --- Core Conversion Logic (Moved from app.py) ---
+app = Flask(__name__) # Initialize Flask app
 
 def _format_gff3_attribute_value(value: str) -> str:
     """
@@ -43,11 +19,11 @@ def _format_gff3_attribute_value(value: str) -> str:
     """
     # Replace internal double quotes with single quotes to avoid parsing issues
     value = value.replace('"', "'")
-    
+
     # URL-encode other problematic characters that are GFF3 delimiters or special,
     # but explicitly add space to 'safe' characters to prevent %20 encoding.
     # The 'safe' set includes alphanumeric characters, and common symbols like /:.-_
-    # Adding ' ' to safe will prevent spaces from be
+    # Adding ' ' to safe will prevent spaces from being encoded.
     return quote(value, safe="/:.,-_ ")
 
 def _get_common_qualifiers(feature) -> dict:
@@ -110,6 +86,7 @@ def _calculate_gff3_phase(cumulative_cds_length: int, initial_codon_start: int) 
     phase = (initial_codon_start - 1 + cumulative_cds_length) % 3
     return str(phase)
 
+
 def _process_feature_gtf(
     seqname: str,
     feature_index: int,
@@ -156,12 +133,12 @@ def _process_feature_gtf(
 
     if (seqname, current_gene_identifier) not in gene_id_map:
         gene_id_map[(seqname, current_gene_identifier)] = current_gene_identifier
-    
+
     attributes.append(f'gene_id "{gene_id_map[(seqname, current_gene_identifier)]}"')
 
     # Transcript ID
     current_transcript_id = None
-    
+
     if current_genbank_feature_type == "mRNA":
         transcript_id_base = genbank_transcript_id_qual or genbank_product_qual or genbank_gene_qual or genbank_locus_tag_qual
         if not transcript_id_base:
@@ -191,15 +168,13 @@ def _process_feature_gtf(
     if genbank_gene_qual:
         attributes.append(f'gene_name "{genbank_gene_qual}"')
     if genbank_product_qual:
-        # FIX: Escape inner quotes properly for f-string
-        attributes.append(f'product "{genbank_product_qual.replace(\'"\', \'""\')}"')
+        attributes.append(f'product "{genbank_product_qual.replace('"', '""')}"')
     if current_genbank_feature_type == "CDS" and genbank_protein_id_qual:
         attributes.append(f'protein_id "{genbank_protein_id_qual}"')
     if common_ids["pseudo"]:
         attributes.append(f'pseudo "true"')
     if common_ids["exception"]:
-        # FIX: Escape inner quotes properly for f-string
-        attributes.append(f'exception "{common_ids["exception"].replace(\'"\', \'""\')}"')
+        attributes.append(f'exception "{common_ids["exception"].replace('"', '""')}"')
     if common_ids["transl_table"] and current_genbank_feature_type == "CDS":
         attributes.append(f'transl_table "{common_ids["transl_table"]}"')
 
@@ -356,7 +331,7 @@ def _process_feature_gff3(
     # 9. Exception attribute
     if common_ids["exception"]:
         attributes.append(f'exception={_format_gff3_attribute_value(common_ids["exception"])}')
-    
+
     # 10. transl_table for CDS
     if common_ids["transl_table"] and current_genbank_feature_type == "CDS":
         attributes.append(f'transl_table={common_ids["transl_table"]}')
@@ -385,7 +360,7 @@ def _process_feature_gff3(
                 attributes.append(f'{qual_key}={_format_gff3_attribute_value(qual_values[0])}')
 
     gff3_attributes_str = ";".join(attributes)
-    output_line = f"{seqname}\tGenbank\t{gff3_feature_type_output}\t{start}\t{end}\t{score}\t{strand_char}\t{frame}\t{gff3_attributes_str}\n"
+    output_line = f"{seqname}\t{gff3_source}\t{gff3_feature_type_output}\t{start}\t{end}\t{score}\t{strand_char}\t{frame}\t{gff3_attributes_str}\n"
     return output_line, cumulative_cds_length
 
 
@@ -495,18 +470,18 @@ def convert_genbank_to_annotation_format(
                     genbank_gene_qual = common_ids["gene"]
                     genbank_locus_tag_qual = common_ids["locus_tag"]
                     genbank_product_qual = common_ids["product"]
-                    
+
                     if output_format_lower == "gff3":
                         if feature.type == "gene":
                             gene_id_base = genbank_gene_qual or genbank_locus_tag_qual
                             gene_gff3_id = f"gene-{_format_gff3_attribute_value(gene_id_base.replace(' ', '_'))}" if gene_id_base else _generate_fallback_id("gene", seqname, feature_index)
                             gff3_id_map[(seqname, "gene", gene_id_base or gene_gff3_id)] = gene_gff3_id
-                            
+
                         elif feature.type == "mRNA":
                             mRNA_id_base = genbank_gene_qual or genbank_locus_tag_qual or genbank_product_qual
                             mRNA_gff3_id = f"rna-{_format_gff3_attribute_value(mRNA_id_base.replace(' ', '_'))}" if mRNA_id_base else _generate_fallback_id("rna", seqname, feature_index)
                             gff3_id_map[(seqname, "mRNA", mRNA_id_base or mRNA_gff3_id)] = mRNA_gff3_id
-                        
+
                 # Second pass: Process all features, including individual parts for CDS/Exon
                 sorted_features_for_output = []
                 for feature_index, feature in enumerate(seq_record.features):
@@ -539,7 +514,7 @@ def convert_genbank_to_annotation_format(
                         if feature.type == "gene":
                             gene_id_base = common_ids["gene"] or common_ids["locus_tag"]
                             gene_gff3_id = gff3_id_map.get((seqname, "gene", gene_id_base))
-                            
+
                             gene_start = int(feature.location.start) + 1
                             gene_end = int(feature.location.end)
                             if isinstance(feature.location, CompoundLocation):
@@ -554,7 +529,7 @@ def convert_genbank_to_annotation_format(
                             attributes.extend(_get_partiality_attributes_gff3(feature.location, gene_start, gene_end))
                             if common_ids["pseudo"]: attributes.append(f'pseudo=true')
                             if common_ids["exception"]: attributes.append(f'exception={_format_gff3_attribute_value(common_ids["exception"])}')
-                            
+
                             for xref in common_ids["db_xrefs"]:
                                 attributes.append(f'Dbxref={_format_gff3_attribute_value(xref)}')
 
@@ -572,7 +547,7 @@ def convert_genbank_to_annotation_format(
                                 mRNA_end = max([int(p.end) for p in feature.location.parts])
 
                             attributes = [f'ID={mRNA_gff3_id}']
-                            
+
                             parent_id_key = (seqname, "gene", common_ids["gene"] or common_ids["locus_tag"])
                             parent_gff3_id = gff3_id_map.get(parent_id_key)
                             if parent_gff3_id:
@@ -585,7 +560,7 @@ def convert_genbank_to_annotation_format(
                             if common_ids["product"]: attributes.append(f'product={_format_gff3_attribute_value(common_ids["product"])}')
                             if common_ids["pseudo"]: attributes.append(f'pseudo=true')
                             if common_ids["exception"]: attributes.append(f'exception={_format_gff3_attribute_value(common_ids["exception"])}')
-                            
+
                             for xref in common_ids["db_xrefs"]:
                                 attributes.append(f'Dbxref={_format_gff3_attribute_value(xref)}')
 
@@ -595,12 +570,12 @@ def convert_genbank_to_annotation_format(
                         elif feature.type in ["tRNA", "rRNA"]:
                             current_gff3_id = f"{feature.type}-{_format_gff3_attribute_value((common_ids['gene'] or common_ids['locus_tag'] or seqname).replace(' ', '_'))}_{feature_index}"
                             attributes = [f'ID={current_gff3_id}']
-                            
+
                             parent_id_key = (seqname, "gene", common_ids["gene"] or common_ids["locus_tag"])
                             parent_gff3_id = gff3_id_map.get(parent_id_key)
                             if parent_gff3_id:
                                 attributes.append(f'Parent={_format_gff3_attribute_value(parent_gff3_id)}')
-                            
+
                             if common_ids["product"]:
                                 attributes.append(f'Name={_format_gff3_attribute_value(common_ids["product"])}')
                             attributes.append(f'gbkey={feature.type}')
@@ -609,7 +584,7 @@ def convert_genbank_to_annotation_format(
                             if common_ids["exception"]: attributes.append(f'exception={_format_gff3_attribute_value(common_ids["exception"])}')
                             for xref in common_ids["db_xrefs"]:
                                 attributes.append(f'Dbxref={_format_gff3_attribute_value(xref)}')
-                            
+
                             out_handle.write(f"{seqname}\tGenbank\t{feature.type}\t{int(feature.location.start)+1}\t{int(feature.location.end)}\t.\t{strand_char}\t.\t{';'.join(attributes)}\n")
                             continue
 
@@ -627,7 +602,7 @@ def convert_genbank_to_annotation_format(
                             if feature.type == "exon":
                                 current_gff3_id = f"exon-{_format_gff3_attribute_value((common_ids['gene'] or common_ids['locus_tag'] or seqname).replace(' ', '_'))}-{part_index+1}"
                                 attributes = [f'ID={current_gff3_id}']
-                                
+
                                 mRNA_parent_id_key = (seqname, "mRNA", common_ids["gene"] or common_ids["locus_tag"] or common_ids["product"])
                                 parent_mRNA_id = gff3_id_map.get(mRNA_parent_id_key)
                                 if parent_mRNA_id:
@@ -639,7 +614,7 @@ def convert_genbank_to_annotation_format(
                                 if common_ids["product"]: attributes.append(f'product={_format_gff3_attribute_value(common_ids["product"])}')
                                 if common_ids["pseudo"]: attributes.append(f'pseudo=true')
                                 if common_ids["exception"]: attributes.append(f'exception={_format_gff3_attribute_value(common_ids["exception"])}')
-                                
+
                                 for xref in common_ids["db_xrefs"]:
                                     attributes.append(f'Dbxref={_format_gff3_attribute_value(xref)}')
 
@@ -652,7 +627,7 @@ def convert_genbank_to_annotation_format(
                                     common_ids, cumulative_cds_length, gff3_id_map
                                 )
                                 out_handle.write(output_line)
-                            
+
         logging.info("Conversion complete!")
 
     except FileNotFoundError as e:
@@ -668,78 +643,45 @@ def convert_genbank_to_annotation_format(
         logging.error(f"An unexpected error occurred: {e}")
         raise
 
-
+# API Endpoint
 @app.route('/convert', methods=['POST'])
 def convert_file():
-    """
-    Handles file upload and conversion requests.
-    Expects a 'file' in request.files and 'format' in request.form.
-    """
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part in the request"}), 400
+    if 'genbank_file' not in request.files:
+        return jsonify({"error": "No genbank_file part in the request"}), 400
 
-    file = request.files['file']
+    genbank_file = request.files['genbank_file']
     output_format = request.form.get('format', 'gtf').lower()
 
-    if file.filename == '':
+    if output_format not in ['gtf', 'gff3']:
+        return jsonify({"error": "Invalid output format. Choose 'gtf' or 'gff3'."}), 400
+
+    if genbank_file.filename == '':
         return jsonify({"error": "No selected file"}), 400
 
-    if not allowed_file(file.filename):
-        return jsonify({"error": f"Invalid file type. Allowed types are: {', '.join(ALLOWED_EXTENSIONS)}"}), 400
+    if genbank_file:
+        # Save the uploaded file temporarily
+        input_filepath = "/tmp/input.gb"
+        output_filepath = "/tmp/output.annotation"
+        genbank_file.save(input_filepath)
 
-    filename = secure_filename(file.filename)
-    # Use tempfile.NamedTemporaryFile for safer temporary file handling
-    # It automatically handles unique naming and cleanup on close/delete
-    input_filepath = None
-    output_filepath = None
+        try:
+            convert_genbank_to_annotation_format(input_filepath, output_filepath, output_format)
+            with open(output_filepath, "r") as f:
+                output_content = f.read()
+            return output_content, 200, {'Content-Type': 'text/plain'} # Return as plain text
 
-    try:
-        # Create temporary input file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{filename}", dir=UPLOAD_FOLDER) as temp_input_file:
-            file.save(temp_input_file.name)
-            input_filepath = temp_input_file.name
-        logging.info(f"File saved to {input_filepath}")
+        except Exception as e:
+            logging.error(f"Conversion API error: {e}")
+            return jsonify({"error": str(e)}), 500
+        finally:
+            # Clean up temporary files
+            if os.path.exists(input_filepath):
+                os.remove(input_filepath)
+            if os.path.exists(output_filepath):
+                os.remove(output_filepath)
 
-        # Create temporary output file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{output_format}", dir=UPLOAD_FOLDER) as temp_output_file:
-            output_filepath = temp_output_file.name
-
-        # Perform the conversion
-        convert_genbank_to_annotation_format(input_filepath, output_filepath, output_format)
-        logging.info(f"Successfully converted '{input_filepath}' to '{output_filepath}' in {output_format.upper()} format.")
-
-        # Return the converted file
-        return send_file(output_filepath, as_attachment=True, download_name=f"converted_annotation.{output_format}", mimetype='text/plain')
-
-    except FileNotFoundError as e:
-        logging.error(f"Conversion failed (File Not Found): {e}", exc_info=True)
-        return jsonify({"error": "File not found during conversion.", "details": str(e)}), 500
-    except ValueError as e:
-        logging.error(f"Conversion failed (Invalid Format/Data): {e}", exc_info=True)
-        return jsonify({"error": "Invalid input format or data.", "details": str(e)}), 400
-    except IOError as e:
-        logging.error(f"Conversion failed (File I/O Error): {e}", exc_info=True)
-        return jsonify({"error": "File I/O error during conversion.", "details": str(e)}), 500
-    except Exception as e:
-        logging.error(f"An unexpected error occurred during conversion: {e}", exc_info=True)
-        return jsonify({"error": "An unexpected server error occurred.", "details": str(e)}), 500
-    finally:
-        # Clean up temporary files
-        if input_filepath and os.path.exists(input_filepath):
-            os.remove(input_filepath)
-            logging.info(f"Deleted temporary input file: {input_filepath}")
-        if output_filepath and os.path.exists(output_filepath):
-            os.remove(output_filepath)
-            logging.info(f"Deleted temporary output file: {output_filepath}")
-
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Simple health check endpoint for Cloud Run."""
-    # This endpoint should always return 200 OK if the Flask app is running.
-    # If this is returning 500, it means there's an issue with the app's startup
-    # or a very fundamental error preventing it from responding.
-    return jsonify({"status": "ok", "message": "Service is running"}), 200
-
-if __name__ == '__main__':
-    # For local testing, use a port, e.g., 8080. Cloud Run will set PORT env var.
-    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+# To run the Flask app
+if __name__ == "__main__":
+    # Cloud Run expects the application to listen on PORT environment variable
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)

@@ -13,7 +13,10 @@ from flask_cors import CORS # Import CORS
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 app = Flask(__name__)
-CORS(app) # Enable CORS for all routes. For production, consider more specific origins: CORS(app, origins=["https://sciencecodons.com"])
+# Explicitly allow CORS from your frontend domain
+CORS(app, resources={r"/convert": {"origins": "https://sciencecodons.com"},
+                     r"/health": {"origins": "https://sciencecodons.com"}})
+
 
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024 # 100 MB limit
 

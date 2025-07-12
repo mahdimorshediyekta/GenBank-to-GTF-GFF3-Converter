@@ -15,6 +15,8 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 app = Flask(__name__)
 # Explicitly allow CORS from your frontend domain
+# Ensure that 'https://sciencecodons.com' is the exact origin.
+# If you have other subdomains or test environments, you might need to add them.
 CORS(app, resources={r"/convert": {"origins": "https://sciencecodons.com"},
                      r"/health": {"origins": "https://sciencecodons.com"}})
 
@@ -731,6 +733,9 @@ def convert_file():
 @app.route('/health', methods=['GET'])
 def health_check():
     """Simple health check endpoint for Cloud Run."""
+    # This endpoint should always return 200 OK if the Flask app is running.
+    # If this is returning 500, it means there's an issue with the app's startup
+    # or a very fundamental error preventing it from responding.
     return jsonify({"status": "ok", "message": "Service is running"}), 200
 
 if __name__ == '__main__':

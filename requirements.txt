@@ -1,5 +1,4 @@
-Flask==2.3.2
-Biopython==1.81
-Werkzeug==2.3.7
-Flask-Cors==4.0.0
+flask==3.0.0
+biopython==1.83
+flask-cors==4.0.0
 gunicorn==21.2.0

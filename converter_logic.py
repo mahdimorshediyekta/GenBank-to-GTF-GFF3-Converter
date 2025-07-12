@@ -165,7 +165,7 @@ def _process_feature_gtf(
     if genbank_gene_qual:
         attributes.append(f'gene_name "{genbank_gene_qual}"')
     if genbank_product_qual:
-        attributes.append(f"product \"{genbank_product_qual.replace('\"', '\"\"')}\"")
+        attributes.append(f'product "{genbank_product_qual.replace('"', '""')}"')
     if current_genbank_feature_type == "CDS" and genbank_protein_id_qual:
         attributes.append(f'protein_id "{genbank_protein_id_qual}"')
     if common_ids["pseudo"]:

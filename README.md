@@ -2,6 +2,8 @@
 
 A robust web-based tool for converting GenBank flat files (`.gb`, `.gbk`) into standard Gene Transfer Format (GTF) or General Feature Format Version 3 (GFF3). This application provides a convenient API for programmatic conversion and is containerized for easy deployment.
 
+**Explore a live demo or learn more at our official website: [Science Codons](https://sciencecodons.com/)**
+
 ## 🧬 Bioinformatics Context
 
 GenBank is a comprehensive public database of nucleotide sequences and their protein translations. While rich in information, its flat-file format is often not directly compatible with many bioinformatics tools used for downstream analysis, such as genome browsers, RNA-seq quantification pipelines, or variant annotation tools. These tools frequently require annotation files in standardized formats like GTF or GFF3.
@@ -46,136 +48,151 @@ Follow these steps to set up and run the converter locally for development or te
 
 ### Installation
 
-1.  **Clone the repository:**
+1. **Clone the repository:**
 
-    ```bash
-    git clone [https://github.com/mahdimorshediyekta/GenBank-to-GTF-GFF3-Converter.git](https://github.com/mahdimorshediyekta/GenBank-to-GTF-GFF3-Converter.git)
-    cd GenBank-to-GTF-GFF3-Converter
-    ```
+git clone https://github.com/mahdimorshediyekta/GenBank-to-GTF-GFF3-Converter.git
+cd GenBank-to-GTF-GFF3-Converter
 
-    (Note: Replace `mahdimorshediyekta/GenBank-to-GTF-GFF3-Converter.git` with your actual repository URL if it's different).
 
-2.  **Create a virtual environment (recommended):**
+2. **Create a virtual environment (recommended):**
 
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Windows: venv\Scripts\activate
-    ```
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-3.  **Install dependencies:**
 
-    ```bash
-    pip install -r requirements.txt
-    ```
+3. **Install dependencies:**
+
+pip install -r requirements.txt
+
 
 ### Running the Flask Application Locally
 
 After installation, you can run the Flask development server:
 
-```bash
-python test.py
-The application will start on http://0.0.0.0:5000. You can test the API by making requests to http://localhost:5000/api/convert.
+python app.py
 
-💻 API Usage
-The converter exposes a single primary API endpoint for conversion: /api/convert.
 
-POST /api/convert
+The application will start on `http://0.0.0.0:5000`. You can test the API by making requests to `http://localhost:5000/api/convert`.
+
+### 💻 API Usage
+
+The converter exposes a single primary API endpoint for conversion: `/api/convert`.
+
+**`POST /api/convert`**
+
 This endpoint accepts GenBank data either as a file upload or raw text and converts it to the specified format.
 
-Request Body:
+**Request Body:**
 
 You can send data in one of two ways:
 
-Multipart Form Data (for file upload):
+* **Multipart Form Data (for file upload):**
 
-file: The GenBank file (.gb, .gbk, .genbank).
+  * `file`: The GenBank file (`.gb`, `.gbk`, `.genbank`).
 
-output_format: (Optional) The desired output format. Can be gtf or gff3. Defaults to gff3.
+  * `output_format`: (Optional) The desired output format. Can be `gtf` or `gff3`. Defaults to `gff3`.
 
-Form Data (for raw text paste):
+* **Form Data (for raw text paste):**
 
-genbank_data: A string containing the raw GenBank file content.
+  * `genbank_data`: A string containing the raw GenBank file content.
 
-output_format: (Optional) The desired output format. Can be gtf or gff3. Defaults to gff3.
+  * `output_format`: (Optional) The desired output format. Can be `gtf` or `gff3`. Defaults to `gff3`.
 
-Response:
+**Response:**
 
 A JSON object containing:
 
-success: true if conversion was successful, false otherwise.
+* `success`: `true` if conversion was successful, `false` otherwise.
 
-converted_data: The converted annotation data as a string (for smaller files).
+* `converted_data`: The converted annotation data as a string (for smaller files).
 
-download_url: A URL from which the converted file can be downloaded.
+* `download_url`: A URL from which the converted file can be downloaded.
 
-error: An error message if success is false.
+* `error`: An error message if `success` is `false`.
 
-Example curl Command (File Upload):
+**Example `curl` Command (File Upload):**
 
-Bash
+curl -X POST
 
-curl -X POST \
-  -F "file=@/path/to/your/input.gb" \
-  -F "output_format=gtf" \
-  http://localhost:5000/api/convert
-Example curl Command (Raw Data):
+-F "file=@/path/to/your/input.gb"
 
-Bash
+-F "output_format=gtf"
 
-curl -X POST \
-  -d "genbank_data=LOCUS       NC_000913             4639675 bp    DNA     circular BCT 01-JUL-2008\nDEFINITION  Escherichia coli K-12 MG1655 complete genome.\n..." \
-  -d "output_format=gff3" \
-  http://localhost:5000/api/convert
-(Replace ... with actual GenBank content)
+http://localhost:5000/api/convert
 
-GET /api/download/<filename>
-This endpoint serves the converted file for download. The download_url provided by the /api/convert endpoint will point to this.
 
-🐳 Deployment
+**Example `curl` Command (Raw Data):**
+
+curl -X POST
+
+-d "genbank_data=LOCUS       NC_000913             4639675 bp    DNA     circular BCT 01-JUL-2008\nDEFINITION  Escherichia coli K-12 MG1655 complete genome.\n..."
+
+-d "output_format=gff3"
+
+http://localhost:5000/api/convert
+
+
+(Replace `...` with actual GenBank content)
+
+**`GET /api/download/<filename>`**
+
+This endpoint serves the converted file for download. The `download_url` provided by the `/api/convert` endpoint will point to this.
+
+## 🐳 Deployment
+
 This application is designed for easy containerization and deployment.
 
-Building the Docker Image
-Ensure you have Docker installed. Navigate to the root directory of the project (where Dockerfile is located) and run:
+### Building the Docker Image
 
-Bash
+Ensure you have Docker installed. Navigate to the root directory of the project (where `Dockerfile` is located) and run:
 
 docker build -t genbank-converter .
-Running Docker Locally
+
+
+### Running Docker Locally
+
 To run the built Docker image on your local machine:
 
-Bash
-
 docker run -p 5000:5000 genbank-converter
-This will make the application accessible at http://localhost:5000.
 
-Deploying to Google Cloud Run
-The provided Dockerfile is optimized for deployment on Google Cloud Run. Cloud Run automatically sets the PORT environment variable (typically to 8080), and the Gunicorn CMD in the Dockerfile is configured to listen on this variable.
 
-Ensure gcloud CLI is configured for your Google Cloud project.
+This will make the application accessible at `http://localhost:5000`.
 
-Deploy using gcloud run deploy:
+### Deploying to Google Cloud Run
 
-Bash
+The provided `Dockerfile` is optimized for deployment on Google Cloud Run. Cloud Run automatically sets the `PORT` environment variable (typically to 8080), and the Gunicorn `CMD` in the `Dockerfile` is configured to listen on this variable.
 
-gcloud run deploy genbank-to-gtf-gff3-converter \
-  --source . \
-  --region YOUR_REGION \
-  --allow-unauthenticated # Or configure authentication as needed
-Replace YOUR_REGION with your desired Google Cloud region (e.g., us-central1, europe-west1).
+Ensure `gcloud` CLI is configured for your Google Cloud project.
+
+Deploy using `gcloud run deploy`:
+
+gcloud run deploy genbank-to-gtf-gff3-converter
+
+--source .
+
+--region YOUR_REGION
+
+--allow-unauthenticated # Or configure authentication as needed
+
+
+Replace `YOUR_REGION` with your desired Google Cloud region (e.g., `us-central1`, `europe-west1`).
 
 Cloud Run will automatically build the Docker image from your source code and deploy it.
 
-📁 Project Structure
-test.py: The main Flask application containing the GenBank conversion logic and API endpoints.
+## 📁 Project Structure
 
-requirements.txt: Lists all Python dependencies required by the application.
+* `app.py`: The main Flask application containing the GenBank conversion logic and API endpoints.
 
-Dockerfile: Instructions for building the Docker image for containerization.
+* `requirements.txt`: Lists all Python dependencies required by the application.
 
-temp_files/: A directory created by the application to temporarily store converted files before download. This directory is automatically managed by a background cleanup scheduler.
+* `Dockerfile`: Instructions for building the Docker image for containerization.
 
-🤝 Contributing
+* `temp_files/`: A directory created by the application to temporarily store converted files before download. This directory is automatically managed by a background cleanup scheduler.
+
+## 🤝 Contributing
+
 Contributions are welcome! If you find a bug or have a feature request, please open an issue. If you'd like to contribute code, please fork the repository and submit a pull request.
 
-📄 License
-This project is licensed under the MIT License - see the LICENSE file for details.
+## 📄 License
+
+This project is licensed under the MIT License - see the `LICENSE` file for details.

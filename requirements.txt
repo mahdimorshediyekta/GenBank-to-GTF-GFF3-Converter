@@ -5,4 +5,4 @@ Flask-Cors
 APScheduler
 python-dotenv
 requests
-Biopython
+Biopython==1.83

@@ -4,7 +4,7 @@ import time
 import atexit
 import logging
 from io import StringIO
-from urllib.parse import quote # Still useful for other special characters
+from urllib.parse import quote
 from typing import Dict, List, Any
 
 from flask import Flask, request, jsonify, send_from_directory
@@ -12,15 +12,18 @@ from flask_cors import CORS
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from Bio import SeqIO
-from Bio.SeqFeature import FeatureLocation, CompoundLocation
+from Bio.SeqFeature import (
+    FeatureLocation, CompoundLocation,
+    BeforePosition, AfterPosition, UnknownPosition
+)
 
 # Configure logging for better feedback
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(message)s')
 
 # --- Configuration ---
 TEMP_DIR = 'temp_files'
-MAX_CONTENT_LENGTH = 20 * 1024 * 1024  # 20 MB, adjust as needed for large GenBank files
-FILE_LIFETIME_SECONDS = 300  # 5 minutes
+MAX_CONTENT_LENGTH = 200 * 1024 * 1024  # 200 MB, adjust as needed for large GenBank files
+FILE_LIFETIME_SECONDS = 60  # 1 minute
 
 # Create the temporary directory if it doesn't exist
 if not os.path.exists(TEMP_DIR):
@@ -32,11 +35,13 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 
 # --- CORS Configuration ---
 # IMPORTANT: Adjust allowed_origins to your actual frontend domain(s)
+# For production, replace 'http://localhost:3000' and 'http://127.0.0.1:5637'
+# with your actual hosted frontend domains (e.g., 'https://yourfrontend.com').
+# Avoid using "*" in production for security reasons.
 allowed_origins = [
-    "https://sciencecodons.com", # Replace with your production domain
-    "http://sciencecodons.com",  # Replace with your production domain
-    "http://localhost:3000",            # For local frontend development
-    "http://127.0.0.1:5637"             # Another common local dev port
+    "http://localhost:3000",      
+    "http://127.0.0.1:5637",           
+    "https://sciencecodons.com", 
 ]
 CORS(app, resources={r"/api/*": {"origins": allowed_origins}})
 
@@ -61,21 +66,15 @@ scheduler.add_job(func=delete_old_files, trigger="interval", minutes=5)
 scheduler.start()
 atexit.register(lambda: scheduler.shutdown())
 
-# --- GenBank Conversion Logic (Adapted from your original script) ---
+# --- GenBank Conversion Logic ---
 
 def _format_gff3_attribute_value(value: str) -> str:
     """
     Formats a string value for GFF3 attributes.
     Replaces internal double quotes with single quotes.
-    URL-encodes problematic GFF3 characters (;,=,%,,,\\t,\\n,\\r) but *preserves spaces*.
+    URL-encodes problematic GFF3 characters (;,=,%,,\t,\n,\r) but *preserves spaces*.
     """
-    # Replace internal double quotes with single quotes to avoid parsing issues
     value = value.replace('"', "'")
-
-    # URL-encode other problematic characters that are GFF3 delimiters or special,
-    # but explicitly add space to 'safe' characters to prevent %20 encoding.
-    # The 'safe' set includes alphanumeric characters, and common symbols like /:.-_
-    # Adding ' ' to safe will prevent spaces from being encoded.
     return quote(value, safe="/:.,-_ ")
 
 def _get_common_qualifiers(feature, excluded_qualifiers: List[str] = None) -> Dict[str, Any]:
@@ -123,92 +122,69 @@ def _get_common_qualifiers(feature, excluded_qualifiers: List[str] = None) -> Di
         "standard_name": qualifiers.get("standard_name", [None])[0],
         "transl_except": qualifiers.get("transl_except", []),
         "translation": qualifiers.get("translation", [None])[0],
-        "pseudo": "pseudo" in qualifiers, # Check for presence of 'pseudo' flag
-        "partial": "partial" in qualifiers, # Check for presence of 'partial' flag
-        "exception": qualifiers.get("exception", [None])[0]
+        "pseudo": "pseudo" in qualifiers,
+        "partial": "partial" in qualifiers,
     }
 
-    # Add any other qualifiers not explicitly handled, unless they are in excluded_qualifiers
     for key, value in qualifiers.items():
-        if key not in common and key not in excluded_qualifiers and value:
+        if value is not None and key not in common and key not in excluded_qualifiers:
             common[key] = value[0] if isinstance(value, list) and len(value) == 1 else value
 
     return common
 
-def _generate_fallback_id(seqname: str, feature_type: str, index: int, is_protein_id: bool = False) -> str:
+def _generate_fallback_id(seqname: str, feature_type: str, index: int) -> str:
     """Generates a consistent fallback ID."""
-    prefix = "protein" if is_protein_id else feature_type
-    return f"{prefix}_{seqname}_{index}"
+    # Ensure ID parts are safe for GFF3/GTF by replacing spaces
+    safe_seqname = seqname.replace(' ', '_')
+    safe_feature_type = feature_type.replace(' ', '_')
+    return f"{safe_feature_type}_{safe_seqname}_{index}"
 
-def _calculate_gtf_frame(loc: FeatureLocation) -> str:
+def _calculate_gtf_frame(feature) -> str:
     """Calculates the GTF frame (0, 1, 2) for a CDS feature."""
-    # GTF frame is 0-based, relative to the start of the CDS, indicating
-    # the number of bases to skip at the start of the feature to reach the first complete codon.
-    # Biopython's codon_start is 1-based.
-    # frame = (3 - (codon_start - 1) % 3) % 3
-    # If codon_start is 1, frame is 0. If codon_start is 2, frame is 2. If codon_start is 3, frame is 1.
-    codon_start = loc.qualifiers.get("codon_start", ["1"])[0] # Default to 1 if not present
+    codon_start = feature.qualifiers.get("codon_start", ["1"])[0]
     try:
         cs = int(codon_start)
         return str((3 - (cs - 1) % 3) % 3)
     except ValueError:
-        return "." # Invalid codon_start
+        return "."
 
-def _calculate_gff3_phase(loc: FeatureLocation) -> str:
+def _calculate_gff3_phase(feature) -> str:
     """Calculates the GFF3 phase (0, 1, 2) for a CDS feature."""
-    # GFF3 phase is 0-based, relative to the start of the CDS, indicating
-    # the number of bases to skip at the start of the feature to reach the first complete codon.
-    # It's the same as GTF frame.
-    codon_start = loc.qualifiers.get("codon_start", ["1"])[0] # Default to 1 if not present
+    codon_start = feature.qualifiers.get("codon_start", ["1"])[0]
     try:
         cs = int(codon_start)
         return str((cs - 1) % 3)
     except ValueError:
-        return "." # Invalid codon_start
+        return "."
 
 def _get_partiality_attributes_gff3(loc: FeatureLocation) -> Dict[str, str]:
     """
     Determines GFF3 partiality attributes based on Biopython FeatureLocation.
+    Checks for specific partial position types.
     """
     attrs = {}
-    if loc.start_original_position != 0: # Indicates 5' partiality
+    if isinstance(loc.start, (BeforePosition, UnknownPosition)):
         attrs["five_prime_partial"] = "true"
-    if loc.end_original_position != None and loc.end_original_position != loc.length: # Indicates 3' partiality
+    if isinstance(loc.end, (AfterPosition, UnknownPosition)):
         attrs["three_prime_partial"] = "true"
     return attrs
 
 def _process_feature_gtf(feature, seqname: str, source: str, feature_index: int,
-                         gtf_gene_ids: Dict[str, str], gtf_transcript_ids: Dict[str, str],
-                         record_length: int) -> str | None:
+                         gtf_gene_ids: Dict[str, str], gtf_transcript_ids: Dict[str, str]) -> str | None:
     """Processes a single Biopython SeqFeature for GTF output."""
     feature_type = feature.type
-    # GTF typically only includes gene, transcript, exon, CDS, start_codon, stop_codon
     if feature_type not in ["gene", "mRNA", "CDS", "tRNA", "rRNA", "exon"]:
         logging.debug(f"Skipping GTF conversion for feature type: {feature_type}")
         return None
 
-    # GTF coordinates are 1-based, inclusive
     start = int(feature.location.start) + 1
     end = int(feature.location.end)
-
-    # Handle compound locations (e.g., for CDS across introns)
-    if isinstance(feature.location, CompoundLocation):
-        # For GTF, compound locations (like multi-exon CDS) are typically broken into individual exons/CDS segments.
-        # This simplified approach will just take the overall start/end.
-        # A more robust GTF converter would iterate through sub_features.
-        # For now, we'll output a single line for the overall feature.
-        pass # Start and end are already calculated from overall location
 
     strand = "+" if feature.location.strand == 1 else "-" if feature.location.strand == -1 else "."
     score = "."
 
     common_qualifiers = _get_common_qualifiers(feature, excluded_qualifiers=[
-        "codon_start", "transl_table", "note", "db_xref", "experiment", "function",
-        "inference", "old_locus_tag", "organism", "mol_type", "collection_date",
-        "country", "isolation_source", "host", "strain", "segment", "map",
-        "allele", "citation", "compare", "direction", "gap", "label",
-        "mobile_element_type", "rpt_family", "rpt_type", "standard_name",
-        "transl_except", "translation", "pseudo", "partial", "exception"
+        "codon_start", "transl_table", "note", "db_xref", "translation", "pseudo", "partial", "exception"
     ])
 
     attributes = []
@@ -219,38 +195,40 @@ def _process_feature_gtf(feature, seqname: str, source: str, feature_index: int,
 
     # Gene ID handling for GTF
     if gene_name:
-        gene_id = gtf_gene_ids.setdefault(gene_name, f"gene_{gene_name}")
+        gene_id = gtf_gene_ids.setdefault(gene_name, f"gene_{_format_gff3_attribute_value(gene_name.replace(' ', '_'))}")
     else:
-        gene_id = gtf_gene_ids.setdefault(f"{seqname}_{feature_index}_gene", f"gene_{seqname}_{feature_index}")
+        gene_id = gtf_gene_ids.setdefault(f"{seqname}_{feature_index}_gene", _generate_fallback_id(seqname, "gene", feature_index))
     attributes.append(f'gene_id "{gene_id}"')
 
     # Transcript ID handling for GTF
+    current_transcript_id = None
     if feature_type == "mRNA":
         if transcript_id_qual:
-            transcript_id = gtf_transcript_ids.setdefault(transcript_id_qual, f"transcript_{transcript_id_qual}")
+            current_transcript_id = gtf_transcript_ids.setdefault(transcript_id_qual, f"transcript_{_format_gff3_attribute_value(transcript_id_qual.replace(' ', '_'))}")
         elif gene_name:
-            transcript_id = gtf_transcript_ids.setdefault(f"{gene_name}_transcript", f"transcript_{gene_name}_{feature_index}")
+            current_transcript_id = gtf_transcript_ids.setdefault(f"{gene_name}_transcript", f"transcript_{_format_gff3_attribute_value(gene_name.replace(' ', '_'))}_{feature_index}")
         else:
-            transcript_id = gtf_transcript_ids.setdefault(f"{seqname}_{feature_index}_transcript", f"transcript_{seqname}_{feature_index}")
-        attributes.append(f'transcript_id "{transcript_id}"')
-    elif feature_type == "CDS" or feature_type == "exon":
-        # For CDS/exon, try to link to an mRNA/transcript if available
-        # This is a simplification; a full GTF conversion would need a pre-pass or more complex logic
-        # to ensure CDS/exons are correctly nested under transcripts.
-        # For now, we'll try to derive a transcript_id.
-        parent_gene_name = common_qualifiers.get("gene") or common_qualifiers.get("locus_tag")
-        if parent_gene_name and parent_gene_name in gtf_gene_ids:
-            # Try to find an associated mRNA/transcript ID if one was generated for this gene
-            # This is heuristic and might not always be correct without explicit parentage in GenBank
-            derived_transcript_id = gtf_transcript_ids.get(f"{parent_gene_name}_transcript") or \
-                                    gtf_transcript_ids.get(f"{seqname}_{feature_index}_transcript") # Fallback
+            current_transcript_id = gtf_transcript_ids.setdefault(f"{seqname}_{feature_index}_mRNA_transcript", _generate_fallback_id(seqname, "mRNA_transcript", feature_index))
+    elif feature_type in ["CDS", "exon"]:
+        # Try to link to an mRNA/transcript based on gene_name first
+        if gene_name and gene_name in gtf_gene_ids:
+            # Check if an mRNA transcript was already generated for this gene
+            derived_transcript_id = gtf_transcript_ids.get(f"{gene_name}_transcript")
             if derived_transcript_id:
-                attributes.append(f'transcript_id "{derived_transcript_id}"')
-            else: # Fallback if no derived transcript ID found
-                attributes.append(f'transcript_id "{_generate_fallback_id(seqname, "transcript", feature_index)}"')
+                current_transcript_id = derived_transcript_id
+            elif protein_id:
+                current_transcript_id = f"transcript_{_format_gff3_attribute_value(protein_id.replace(' ', '_'))}"
+        if not current_transcript_id: # Fallback if no specific transcript ID derived
+             current_transcript_id = _generate_fallback_id(seqname, f"{feature_type}_transcript", feature_index)
+    elif feature_type in ["tRNA", "rRNA"]:
+        if gene_name:
+            current_transcript_id = f"transcript_{_format_gff3_attribute_value(gene_name.replace(' ', '_'))}_{feature_type}"
         else:
-            attributes.append(f'transcript_id "{_generate_fallback_id(seqname, "transcript", feature_index)}"')
+            current_transcript_id = _generate_fallback_id(seqname, f"{feature_type}_transcript", feature_index)
 
+
+    if current_transcript_id:
+        attributes.append(f'transcript_id "{current_transcript_id}"')
 
     if gene_name:
         attributes.append(f'gene_name "{_format_gff3_attribute_value(gene_name)}"')
@@ -258,40 +236,50 @@ def _process_feature_gtf(feature, seqname: str, source: str, feature_index: int,
         attributes.append(f'product "{_format_gff3_attribute_value(product)}"')
     if protein_id:
         attributes.append(f'protein_id "{_format_gff3_attribute_value(protein_id)}"')
+    if common_qualifiers.get("pseudo"):
+        attributes.append('pseudo "true"')
+    if common_qualifiers.get("exception"):
+        attributes.append(f'exception "{_format_gff3_attribute_value(common_qualifiers["exception"])}"')
+    if common_qualifiers.get("transl_table") and feature_type == "CDS":
+        attributes.append(f'transl_table "{common_qualifiers["transl_table"]}"')
+    
+    # Add other remaining qualifiers
+    for qual_key, qual_value in common_qualifiers.items():
+        if qual_key not in ["gene", "locus_tag", "product", "protein_id", "transcript_id", "pseudo", "exception", "transl_table", "db_xref", "note", "codon_start", "translation", "partial"]:
+            if qual_value is not None:
+                if isinstance(qual_value, list): # For qualifiers like transl_except
+                    attributes.append(f'{qual_key} "{",".join([_format_gff3_attribute_value(str(v)) for v in qual_value])}"')
+                else:
+                    attributes.append(f'{qual_key} "{_format_gff3_attribute_value(str(qual_value))}"')
 
     frame = "."
     if feature_type == "CDS":
-        frame = _calculate_gtf_frame(feature.location)
+        frame = _calculate_gtf_frame(feature)
 
-    # GTF: seqname source feature start end score strand frame attributes
     return f"{seqname}\t{source}\t{feature_type}\t{start}\t{end}\t{score}\t{strand}\t{frame}\t{'; '.join(attributes)};"
 
-def _process_feature_gff3(feature, seqname: str, source: str, feature_index: int, record_length: int,
+
+def _process_feature_gff3(feature, seqname: str, source: str, feature_index: int,
                           gff3_id_map: Dict[str, str], gene_id_bases: Dict[Any, str], mRNA_id_bases: Dict[Any, str],
                           current_source_id: str) -> str | None:
     """Processes a single Biopython SeqFeature for GFF3 output."""
     feature_type = feature.type
 
-    # GFF3 coordinates are 1-based, inclusive
     start = int(feature.location.start) + 1
     end = int(feature.location.end)
 
     strand = "+" if feature.location.strand == 1 else "-" if feature.location.strand == -1 else "."
     score = "."
-    phase = "." # For CDS features
+    phase = "."
 
-    # Exclude qualifiers that are handled as specific GFF3 attributes or are not typically included
-    excluded_qualifiers = [
+    excluded_qualifiers_gff3 = [
         "codon_start", "transl_table", "translation", "pseudo", "partial", "exception",
-        "experiment", "function", "inference", "old_locus_tag", "organism", "mol_type",
-        "collection_date", "country", "isolation_source", "host", "strain", "segment",
-        "map", "allele", "citation", "compare", "direction", "gap", "label",
-        "mobile_element_type", "rpt_family", "rpt_type", "standard_name", "transl_except"
+        "gene", "locus_tag", "product", "protein_id", "transcript_id", "db_xref", "note"
     ]
-    if feature_type == "CDS": # NCBI GFF3 often excludes 'note' for CDS
-        excluded_qualifiers.append("note")
+    if feature_type == "CDS":
+        excluded_qualifiers_gff3.append("note") # NCBI GFF3 often excludes 'note' for CDS
 
-    common_qualifiers = _get_common_qualifiers(feature, excluded_qualifiers)
+    common_qualifiers = _get_common_qualifiers(feature, excluded_qualifiers_gff3)
 
     attributes = []
     feature_id = ""
@@ -299,121 +287,157 @@ def _process_feature_gff3(feature, seqname: str, source: str, feature_index: int
 
     # Handle feature IDs and Parent relationships
     if feature_type == "gene":
-        gene_id_base = common_qualifiers.get("gene") or common_qualifiers.get("locus_tag")
-        if gene_id_base:
-            feature_id = gene_id_bases.get((seqname, gene_id_base), _generate_fallback_id(seqname, "gene", feature_index))
-        else:
-            feature_id = gene_id_bases.get((seqname, feature_index), _generate_fallback_id(seqname, "gene", feature_index))
+        gene_id_base_key = common_qualifiers.get("gene") or common_qualifiers.get("locus_tag")
+        if gene_id_base_key:
+            feature_id = gene_id_bases.get((seqname, gene_id_base_key))
+        if not feature_id: # Fallback if not found in pre-pass map
+            feature_id = _generate_fallback_id(seqname, "gene", feature_index)
         gff3_id_map[f"{seqname}_gene_{feature_index}"] = feature_id # Map for later reference
-        parent_ids.append(current_source_id) # Gene is child of the sequence region
+        
+        # Genes are typically top-level features, but in some cases, they might be children of a larger region.
+        # For GenBank conversion, we'll make them children of the sequence region.
+        parent_ids.append(current_source_id)
 
     elif feature_type == "mRNA":
-        mrna_id_base = common_qualifiers.get("product")
-        if mrna_id_base:
-            feature_id = mRNA_id_bases.get((seqname, mrna_id_base), _generate_fallback_id(seqname, "mRNA", feature_index))
-        else:
-            feature_id = mRNA_id_bases.get((seqname, feature_index), _generate_fallback_id(seqname, "mRNA", feature_index))
-        gff3_id_map[f"{seqname}_mRNA_{feature_index}"] = feature_id # Map for later reference
+        mrna_id_base_key = common_qualifiers.get("product") or common_qualifiers.get("transcript_id") or common_qualifiers.get("gene") or common_qualifiers.get("locus_tag")
+        if mrna_id_base_key:
+            feature_id = mRNA_id_bases.get((seqname, mrna_id_base_key))
+        if not feature_id: # Fallback if not found in pre-pass map
+            feature_id = _generate_fallback_id(seqname, "mRNA", feature_index)
+        gff3_id_map[f"{seqname}_mRNA_{feature_index}"] = feature_id
 
         # mRNA's parent is the gene
-        gene_qual = common_qualifiers.get("gene") or common_qualifiers.get("locus_tag")
-        if gene_qual and (seqname, gene_qual) in gene_id_bases:
-            parent_ids.append(gene_id_bases[(seqname, gene_qual)])
-        else:
-            # Fallback: try to find a gene parent by proximity or a general gene ID for this sequence
-            # This is a simplification; robust linking needs more context
-            parent_ids.append(current_source_id) # Default to source if gene parent not found easily
+        gene_qual_for_parent = common_qualifiers.get("gene") or common_qualifiers.get("locus_tag")
+        if gene_qual_for_parent and (seqname, gene_qual_for_parent) in gene_id_bases:
+            parent_ids.append(gene_id_bases[(seqname, gene_qual_for_parent)])
+        elif current_source_id: # Fallback to source region
+            parent_ids.append(current_source_id)
 
     elif feature_type == "CDS":
-        # CDS ID
         protein_id = common_qualifiers.get("protein_id")
         if protein_id:
-            feature_id = f"cds_{_format_gff3_attribute_value(protein_id)}"
+            feature_id = f"cds-{_format_gff3_attribute_value(protein_id)}"
         else:
             feature_id = _generate_fallback_id(seqname, "CDS", feature_index)
         gff3_id_map[f"{seqname}_CDS_{feature_index}"] = feature_id
 
-        # CDS parent is mRNA (if available) or gene
-        mrna_product = common_qualifiers.get("product")
-        gene_qual = common_qualifiers.get("gene") or common_qualifiers.get("locus_tag")
-
-        if mrna_product and (seqname, mrna_product) in mRNA_id_bases:
-            parent_ids.append(mRNA_id_bases[(seqname, mrna_product)])
-        elif gene_qual and (seqname, gene_qual) in gene_id_bases:
-            parent_ids.append(gene_id_bases[(seqname, gene_qual)])
+        # CDS parent is mRNA (preferable) or gene
+        mrna_parent_key = common_qualifiers.get("product") or common_qualifiers.get("transcript_id") or common_qualifiers.get("gene") or common_qualifiers.get("locus_tag")
+        if mrna_parent_key and (seqname, mrna_parent_key) in mRNA_id_bases:
+            parent_ids.append(mRNA_id_bases[(seqname, mrna_parent_key)])
         else:
-            # Fallback: link to the sequence region
-            parent_ids.append(current_source_id)
-
-        phase = _calculate_gff3_phase(feature.location)
+            gene_parent_key = common_qualifiers.get("gene") or common_qualifiers.get("locus_tag")
+            if gene_parent_key and (seqname, gene_parent_key) in gene_id_bases:
+                parent_ids.append(gene_id_bases[(seqname, gene_parent_key)])
+            elif current_source_id: # Fallback to source region
+                parent_ids.append(current_source_id)
+        
+        phase = _calculate_gff3_phase(feature)
 
     elif feature_type == "exon":
-        feature_id = _generate_fallback_id(seqname, "exon", feature_index)
+        # Exon ID - often based on mRNA ID
+        mrna_parent_key = common_qualifiers.get("product") or common_qualifiers.get("transcript_id") or common_qualifiers.get("gene") or common_qualifiers.get("locus_tag")
+        if mrna_parent_key and (seqname, mrna_parent_key) in mRNA_id_bases:
+            parent_mrna_id = mRNA_id_bases[(seqname, mrna_parent_key)]
+            feature_id = f"{parent_mrna_id.replace('rna-', 'exon-')}_part{feature_index}" # Derive from mRNA ID
+        else:
+            feature_id = _generate_fallback_id(seqname, "exon", feature_index)
         gff3_id_map[f"{seqname}_exon_{feature_index}"] = feature_id
 
         # Exon parent is mRNA
-        mrna_product = common_qualifiers.get("product")
-        if mrna_product and (seqname, mrna_product) in mRNA_id_bases:
-            parent_ids.append(mRNA_id_bases[(seqname, mrna_product)])
-        else:
-            # Fallback: link to the sequence region
+        if mrna_parent_key and (seqname, mrna_parent_key) in mRNA_id_bases:
+            parent_ids.append(mRNA_id_bases[(seqname, mrna_parent_key)])
+        elif current_source_id: # Fallback to source region
             parent_ids.append(current_source_id)
 
     elif feature_type in ["tRNA", "rRNA"]:
-        # For tRNA/rRNA, they might be top-level or children of a gene.
-        # For simplicity, we'll make them children of the gene if a gene qualifier exists,
-        # otherwise children of the source.
-        gene_qual = common_qualifiers.get("gene") or common_qualifiers.get("locus_tag")
-        if gene_qual and (seqname, gene_qual) in gene_id_bases:
-            parent_ids.append(gene_id_bases[(seqname, gene_qual)])
-        else:
+        gene_qual_for_parent = common_qualifiers.get("gene") or common_qualifiers.get("locus_tag")
+        if gene_qual_for_parent and (seqname, gene_qual_for_parent) in gene_id_bases:
+            parent_ids.append(gene_id_bases[(seqname, gene_qual_for_parent)])
+        elif current_source_id:
             parent_ids.append(current_source_id)
-        feature_id = _generate_fallback_id(seqname, feature_type, feature_index)
+        
+        id_base = common_qualifiers.get("product") or common_qualifiers.get("gene") or common_qualifiers.get("locus_tag")
+        if id_base:
+            feature_id = f"{feature_type}-{_format_gff3_attribute_value(id_base.replace(' ', '_'))}"
+        else:
+            feature_id = _generate_fallback_id(seqname, feature_type, feature_index)
         gff3_id_map[f"{seqname}_{feature_type}_{feature_index}"] = feature_id
-
     else:
-        # For other feature types, make them children of the source region
+        # For other feature types, link to the source region
         feature_id = _generate_fallback_id(seqname, feature_type, feature_index)
         parent_ids.append(current_source_id)
 
 
-    # Add ID and Parent attributes
     if feature_id:
-        attributes.append(f"ID={feature_id}")
+        attributes.append(f"ID={_format_gff3_attribute_value(feature_id)}")
     if parent_ids:
-        attributes.append(f"Parent={','.join(parent_ids)}")
+        attributes.append(f"Parent={','.join([_format_gff3_attribute_value(pid) for pid in parent_ids])}")
 
-    # Add Name attribute if available and not already used as ID
     name = common_qualifiers.get("gene") or common_qualifiers.get("locus_tag") or common_qualifiers.get("product")
-    if name and name != feature_id: # Avoid redundant ID/Name if they are the same
+    if name: # GFF3 Name is often a display name, not necessarily unique
         attributes.append(f"Name={_format_gff3_attribute_value(name)}")
 
     # Add Dbxref
     db_xrefs = common_qualifiers.get("db_xref", [])
     if feature_type == "CDS" and common_qualifiers.get("protein_id"):
-        db_xrefs.append(f"NCBI_GP:{common_qualifiers['protein_id']}")
+        db_xrefs.insert(0, f"NCBI_GP:{common_qualifiers['protein_id']}") # Add protein_id as Dbxref
     if db_xrefs:
         attributes.append(f"Dbxref={','.join([_format_gff3_attribute_value(x) for x in db_xrefs])}")
 
-    # Add other common qualifiers as GFF3 attributes
-    for key, value in common_qualifiers.items():
-        if value is not None and key not in ["gene", "locus_tag", "product", "protein_id", "transcript_id", "db_xref", "note", "codon_start", "transl_table"] and key not in excluded_qualifiers:
-            if isinstance(value, list): # Handle list values (e.g., transl_except)
-                attributes.append(f"{key}={','.join([_format_gff3_attribute_value(str(v)) for v in value])}")
-            else:
-                attributes.append(f"{key}={_format_gff3_attribute_value(str(value))}")
+    # Add note if present and not excluded for this feature type
+    note = common_qualifiers.get("note")
+    if note and "note" not in excluded_qualifiers_gff3:
+        attributes.append(f"Note={_format_gff3_attribute_value(note)}")
 
-    # Add partiality attributes
+    # Add gbkey
+    gbkey_map = {
+        "gene": "Gene", "mRNA": "mRNA", "CDS": "CDS", "exon": "mRNA",
+        "tRNA": "tRNA", "rRNA": "rRNA", "source": "Src" # Added source
+    }
+    if feature_type in gbkey_map:
+        attributes.append(f"gbkey={gbkey_map[feature_type]}")
+
+    # Add gene_biotype for gene features
+    if feature_type == "gene":
+        attributes.append(f'gene_biotype=protein_coding') # Assuming protein_coding for genes from GenBank
+
+    # Add pseudo attribute
+    if common_qualifiers.get("pseudo"):
+        attributes.append(f'pseudo=true')
+
+    # Add exception attribute
+    if common_qualifiers.get("exception"):
+        attributes.append(f'exception={_format_gff3_attribute_value(common_qualifiers["exception"])}')
+    
+    # Add transl_table for CDS
+    if common_qualifiers.get("transl_table") and feature_type == "CDS":
+        attributes.append(f'transl_table={common_qualifiers["transl_table"]}')
+
+    # Add gene and product attributes for CDS (as seen in NCBI GFF3)
+    if feature_type == "CDS":
+        if common_qualifiers.get("gene"):
+            attributes.append(f'gene={_format_gff3_attribute_value(common_qualifiers["gene"])}')
+        if common_qualifiers.get("product"):
+            attributes.append(f'product={_format_gff3_attribute_value(common_qualifiers["product"])}')
+        if common_qualifiers.get("protein_id"):
+            attributes.append(f'protein_id={_format_gff3_attribute_value(common_qualifiers["protein_id"])}')
+
+
+    # Add partiality attributes (five_prime_partial, three_prime_partial)
     partiality_attrs = _get_partiality_attributes_gff3(feature.location)
     for k, v in partiality_attrs.items():
         attributes.append(f"{k}={v}")
 
-    # Add note if present and not excluded
-    note = common_qualifiers.get("note")
-    if note and "note" not in excluded_qualifiers:
-        attributes.append(f"Note={_format_gff3_attribute_value(note)}")
+    # Add any other remaining qualifiers
+    for qual_key, qual_value in common_qualifiers.items():
+        if qual_key not in excluded_qualifiers_gff3:
+            if qual_value is not None:
+                if isinstance(qual_value, list):
+                    attributes.append(f"{qual_key}={','.join([_format_gff3_attribute_value(str(v)) for v in qual_value])}")
+                else:
+                    attributes.append(f"{qual_key}={_format_gff3_attribute_value(str(qual_value))}")
 
-    # GFF3: seqname source feature start end score strand phase attributes
     return f"{seqname}\t{source}\t{feature_type}\t{start}\t{end}\t{score}\t{strand}\t{phase}\t{';'.join(attributes)}"
 
 
@@ -426,42 +450,65 @@ def convert_genbank_data_to_annotation_format(genbank_data: str, output_format: 
         return None, "Invalid output format specified. Must be 'gtf' or 'gff3'."
 
     converted_lines = []
-    gff3_id_map = {} # To store IDs for GFF3 parent-child relationships
 
-    # Pre-processing for GFF3 parent-child relationships (gene and mRNA IDs)
-    # This helps ensure Parent attributes can reference existing IDs.
-    gene_id_bases = {}
-    mRNA_id_bases = {}
+    # Dictionaries for ID tracking across features and records
+    # GFF3 needs to know parent IDs from previous features.
+    gff3_id_map = {} # Generic map for any GFF3 ID generated
+    gene_id_bases = {} # Stores base IDs for gene features (seqname, qual_value) -> actual_id
+    mRNA_id_bases = {} # Stores base IDs for mRNA features (seqname, qual_value) -> actual_id
 
     try:
-        # Use StringIO to treat the string data as a file
         genbank_handle = StringIO(genbank_data)
         records = list(SeqIO.parse(genbank_handle, "genbank"))
-        genbank_handle.close() # Close StringIO handle
+        genbank_handle.close()
 
         if not records:
             return None, "No valid GenBank records found in the provided data."
 
+        if output_format == "gtf":
+            converted_lines.append("##gff-version 2.2") # GTF often uses this header, though not strictly part of its spec.
+        elif output_format == "gff3":
+            converted_lines.append("##gff-version 3")
+            converted_lines.append("##gff-spec-version 1.21")
+
+
         for record_index, record in enumerate(records):
             seqname = record.id if record.id else record.name if record.name else f"sequence_{record_index}"
             record_length = len(record.seq)
-            current_source_id = f"region_{seqname}" # Unique ID for the source region of this record
+            current_source_id = f"region-{_format_gff3_attribute_value(seqname)}"
 
-            # GFF3 Header and Source Region feature
+            # --- GFF3 Specific Header and Region Feature ---
             if output_format == "gff3":
-                if record_index == 0: # Only add GFF version once at the very beginning
-                    converted_lines.append("##gff-version 3")
+                converted_lines.append(f"##sequence-region {seqname} 1 {record_length}")
 
                 source_qualifiers = {}
                 for f in record.features:
                     if f.type == "source":
                         source_qualifiers = {k: v[0] for k, v in f.qualifiers.items() if v}
                         break
+                
+                # Add ##species line if taxon is found
+                taxon_ids = [x.split(':')[-1] for x in source_qualifiers.get("db_xref", []) if "taxon:" in x]
+                if taxon_ids:
+                    converted_lines.append(f"##species https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?id={taxon_ids[0]}") # Only first taxon ID
 
-                record_description = source_qualifiers.get("organism", seqname)
-                # Adding a source region feature
+                # Region feature
+                region_attributes = [f'ID={current_source_id}', 'gbkey=Src', 'mol_type=genomic DNA']
+                region_attributes.append(f'Name={_format_gff3_attribute_value(seqname)}')
+                if record.id:
+                    region_attributes.append(f'accession={_format_gff3_attribute_value(record.id)}')
+                if source_qualifiers.get("organism"):
+                    region_attributes.append(f'organism={_format_gff3_attribute_value(source_qualifiers["organism"])}')
+                if source_qualifiers.get("strain"):
+                    region_attributes.append(f'strain={_format_gff3_attribute_value(source_qualifiers["strain"])}')
+                
+                # Add all db_xrefs from source feature to region feature
+                source_db_xrefs = source_qualifiers.get("db_xref", [])
+                if source_db_xrefs:
+                    region_attributes.append(f'Dbxref={",".join([_format_gff3_attribute_value(x) for x in source_db_xrefs])}')
+                
                 converted_lines.append(
-                    f"{seqname}\tGenBank\tregion\t1\t{record_length}\t.\t.\t.\tID={current_source_id};Name={seqname};accession={record.id};Dbxref=taxon:{source_qualifiers.get('db_xref', [''])[0].replace('taxon:', '')};description={_format_gff3_attribute_value(record_description)}"
+                    f"{seqname}\tGenBank\tregion\t1\t{record_length}\t.\t.\t.\t{';'.join(region_attributes)}"
                 )
 
             # Pre-pass for GFF3 to identify gene and mRNA IDs for parent-child linking
@@ -470,35 +517,37 @@ def convert_genbank_data_to_annotation_format(genbank_data: str, output_format: 
                     if feature.type == "gene":
                         gene_qual_val = feature.qualifiers.get("gene", [None])[0] or feature.qualifiers.get("locus_tag", [None])[0]
                         if gene_qual_val:
-                            gene_id_bases[(seqname, gene_qual_val)] = f"gene_{seqname}_{_format_gff3_attribute_value(gene_qual_val)}"
+                            gene_id_bases[(seqname, gene_qual_val)] = f"gene-{_format_gff3_attribute_value(gene_qual_val.replace(' ', '_'))}"
                         else:
-                            # Fallback if no gene/locus_tag qualifier
                             gene_id_bases[(seqname, feature_index)] = _generate_fallback_id(seqname, "gene", feature_index)
                     elif feature.type == "mRNA":
-                        mrna_qual_val = feature.qualifiers.get("product", [None])[0]
+                        # mRNA ID can be based on product, transcript_id, gene, or locus_tag
+                        mrna_qual_val = feature.qualifiers.get("product", [None])[0] or \
+                                        feature.qualifiers.get("transcript_id", [None])[0] or \
+                                        feature.qualifiers.get("gene", [None])[0] or \
+                                        feature.qualifiers.get("locus_tag", [None])[0]
                         if mrna_qual_val:
-                            mRNA_id_bases[(seqname, mrna_qual_val)] = f"mrna_{seqname}_{_format_gff3_attribute_value(mrna_qual_val)}"
+                            mRNA_id_bases[(seqname, mrna_qual_val)] = f"rna-{_format_gff3_attribute_value(mrna_qual_val.replace(' ', '_'))}"
                         else:
-                            # Fallback if no product qualifier
                             mRNA_id_bases[(seqname, feature_index)] = _generate_fallback_id(seqname, "mRNA", feature_index)
 
-
-            gtf_gene_ids = {} # For GTF gene_id tracking (per record)
-            gtf_transcript_ids = {} # For GTF transcript_id tracking (per record)
-
             # Sort features to ensure parents appear before children in GFF3
-            # (e.g., gene before mRNA before CDS/exon)
-            # This is a heuristic sort, not guaranteed to be perfect for all GenBank files.
-            feature_sort_order = {"source": 0, "gene": 1, "mRNA": 2, "tRNA": 3, "rRNA": 4, "CDS": 5, "exon": 6}
+            # and to maintain a somewhat logical order (source, gene, mRNA, tRNA, rRNA, exon, CDS)
+            feature_sort_order = {"source": 0, "gene": 1, "mRNA": 2, "tRNA": 3, "rRNA": 4, "exon": 5, "CDS": 6}
             sorted_features = sorted(record.features, key=lambda f: feature_sort_order.get(f.type, 99))
 
             for feature_index, feature in enumerate(sorted_features):
                 line = None
                 if output_format == "gtf":
-                    line = _process_feature_gtf(feature, seqname, "GenBank", feature_index, gtf_gene_ids, gtf_transcript_ids, record_length)
+                    line = _process_feature_gtf(feature, seqname, "GenBank", feature_index, gtf_gene_ids, gtf_transcript_ids)
                 elif output_format == "gff3":
+                    # For GFF3, if the feature is 'source', it's handled as the sequence-region line
+                    # and often duplicated as a "region" feature. We've handled the "region" explicitly above.
+                    # Other features are processed here.
+                    if feature.type == "source":
+                        continue # Skip processing 'source' features here as they are handled by the 'region' line
                     line = _process_feature_gff3(
-                        feature, seqname, "GenBank", feature_index, record_length,
+                        feature, seqname, "GenBank", feature_index,
                         gff3_id_map, gene_id_bases, mRNA_id_bases, current_source_id
                     )
 
@@ -520,25 +569,20 @@ def convert_genbank_data_to_annotation_format(genbank_data: str, output_format: 
 def handle_genbank_conversion():
     """Handles the file upload/paste, conversion, and response."""
 
-    # Check for file or raw data
     if 'file' not in request.files and 'genbank_data' not in request.form:
         return jsonify({"success": False, "error": "No GenBank data provided. Please upload a file or paste data."}), 400
 
-    # Determine output format
     output_format = request.form.get('output_format', 'gff3').lower()
     if output_format not in ['gtf', 'gff3']:
         return jsonify({"success": False, "error": "Invalid output format. Choose 'gtf' or 'gff3'."}), 400
 
     genbank_data = ""
     try:
-        # Read data from file upload
         if 'file' in request.files and request.files['file'].filename != '':
             genbank_file = request.files['file']
-            # Basic file type validation
             if not genbank_file.filename.lower().endswith(('.gb', '.gbk', '.genbank')):
                 return jsonify({"success": False, "error": "Invalid file type. Please upload a .gb, .gbk, or .genbank file."}), 400
             genbank_data = genbank_file.read().decode('utf-8')
-        # Read data from raw text input
         elif 'genbank_data' in request.form:
             genbank_data = request.form['genbank_data']
         else:
@@ -551,13 +595,11 @@ def handle_genbank_conversion():
         logging.error(f"Error processing input: {e}", exc_info=True)
         return jsonify({"success": False, "error": f"Error processing input: {e}"}), 400
 
-    # Perform the conversion
     converted_result, error_message = convert_genbank_data_to_annotation_format(genbank_data, output_format)
 
     if error_message:
         return jsonify({"success": False, "error": error_message}), 400
 
-    # Generate a unique filename for the output
     unique_filename = f"{uuid.uuid4()}.{output_format}"
     output_path = os.path.join(TEMP_DIR, unique_filename)
 
@@ -568,27 +610,23 @@ def handle_genbank_conversion():
         logging.error(f"Error writing file to temporary storage: {e}", exc_info=True)
         return jsonify({"success": False, "error": "A server error occurred while preparing the file for download."}), 500
 
-    # Construct download URL
     download_url = request.host_url.rstrip('/') + f"/api/download/{unique_filename}"
 
     return jsonify({
         "success": True,
-        "converted_data": converted_result, # Optionally return data directly for smaller files
+        "converted_data": converted_result,
         "download_url": download_url
     })
 
 @app.route('/api/download/<filename>')
 def download_converted_file(filename):
     """Serves the converted file for download."""
-    # Security: Use secure_filename to prevent directory traversal
     from werkzeug.utils import secure_filename
     safe_filename = secure_filename(filename)
 
-    # Ensure the filename matches the secured version to prevent malicious paths
     if safe_filename != filename:
         return jsonify({"success": False, "error": "Invalid filename."}), 400
 
-    # Ensure the file exists and is within the TEMP_DIR
     full_file_path = os.path.join(TEMP_DIR, safe_filename)
     if not os.path.exists(full_file_path):
         logging.warning(f"Attempted to download non-existent file: {full_file_path}")
@@ -599,7 +637,7 @@ def download_converted_file(filename):
 @app.errorhandler(413)
 def request_entity_too_large(error):
     """Handles requests where the payload size exceeds MAX_CONTENT_LENGTH."""
-    return jsonify({"success": False, "error": f"The file is too large. The maximum allowed size is {MAX_CONTENT_LENGTH / 1024 / 1024:.0f}MB."}), 413
+    return jsonify({"success": False, "error": f"The file is too large. The maximum allowed size is {MAX_CONTENT_LENGTH / (1024 * 1024):.0f} MB."}), 413
 
 @app.route('/')
 def serve_index():
@@ -607,5 +645,4 @@ def serve_index():
     return "GenBank to GTF/GFF3 Converter API is running. Use /api/convert to interact."
 
 if __name__ == '__main__':
-    # For local development, run on port 5000
     app.run(host='0.0.0.0', port=5000, debug=True)

@@ -36,4 +36,4 @@ COPY . .
 # should listen on (typically 8080). Gunicorn is configured to bind to 0.0.0.0
 # and use the value of the PORT environment variable.
 # `app:app` refers to the Flask application instance named `app` within the `app.py` file.
-CMD ["gunicorn", "--bind", "0.0.0.0:$PORT", "app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]

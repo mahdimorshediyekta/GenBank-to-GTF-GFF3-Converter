@@ -37,7 +37,7 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 # with your actual hosted frontend domains (e.g., 'https://yourfrontend.com').
 # Avoid using "*" in production for security reasons.
 allowed_origins = [
-    "http://localhost:3000",            # For local frontend development
+    "https://sciencecodons.com",            # For local frontend development
     "http://127.0.0.1:5637",            # Another common local dev port
     # "https://your-genbank-website.com", # Replace with your production domain
 ]

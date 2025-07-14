@@ -19,20 +19,13 @@ RUN apt-get update && \
 # Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements file and install Python packages.
-# This step is done before copying the rest of the code to leverage Docker's build cache.
-# If requirements.txt doesn't change, this layer won't be rebuilt.
+# Copy the requirements file and install Python packages 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt 
 
-# Copy the rest of your application code into the container
+# Copy the rest of your application code into the container 
 COPY . .
 
-# Expose the port the app runs on (informational for Docker, actual binding from ENV variable)
-EXPOSE 8080 
-# Command to run the application using Gunicorn.
-# Cloud Run automatically sets the PORT environment variable to the port your container
-# should listen on (typically 8080). Gunicorn is configured to bind to 0.0.0.0
-# and use the value of the PORT environment variable.
-# `app:app` refers to the Flask application instance named `app` within the `app.py` file.
-CMD ["gunicorn", "--bind", "0.0.0.0:${PORT}", "app:app"]
+# Command to run the application using Gunicorn 
+# This now uses the PORT environment variable, which is standard for Cloud Run and other platforms.
+CMD exec gunicorn --bind 0.0.0.0:$PORT  --timeout 0 app:app

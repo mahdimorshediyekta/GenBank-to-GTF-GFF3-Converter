@@ -28,9 +28,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of your application code into the container
 COPY . .
 
+# Expose the port the app runs on (informational for Docker, actual binding from ENV variable)
+EXPOSE 8080 
 # Command to run the application using Gunicorn.
 # Cloud Run automatically sets the PORT environment variable to the port your container
 # should listen on (typically 8080). Gunicorn is configured to bind to 0.0.0.0
 # and use the value of the PORT environment variable.
 # `app:app` refers to the Flask application instance named `app` within the `app.py` file.
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:${PORT}", "app:app"]

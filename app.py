@@ -22,8 +22,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(m
 
 # --- Configuration ---
 TEMP_DIR = 'temp_files'
-MAX_CONTENT_LENGTH = 200 * 1024 * 1024  # 200 MB, adjust as needed for large GenBank files
-FILE_LIFETIME_SECONDS = 60  # 1 minute
+MAX_CONTENT_LENGTH = 20 * 1024 * 1024  # 20 MB, adjust as needed for large GenBank files
+FILE_LIFETIME_SECONDS = 300  # 5 minutes
 
 # Create the temporary directory if it doesn't exist
 if not os.path.exists(TEMP_DIR):
@@ -39,9 +39,9 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 # with your actual hosted frontend domains (e.g., 'https://yourfrontend.com').
 # Avoid using "*" in production for security reasons.
 allowed_origins = [
-    "http://localhost:3000",      
-    "http://127.0.0.1:5637",           
-    "https://sciencecodons.com", 
+    "http://localhost:3000",            # For local frontend development
+    "http://127.0.0.1:5637",            # Another common local dev port
+    # "https://your-genbank-website.com", # Replace with your production domain
 ]
 CORS(app, resources={r"/api/*": {"origins": allowed_origins}})
 
@@ -645,4 +645,6 @@ def serve_index():
     return "GenBank to GTF/GFF3 Converter API is running. Use /api/convert to interact."
 
 if __name__ == '__main__':
+    # For local development, run on port 5000.
+    # IMPORTANT: Set debug=False in production for security and performance.
     app.run(host='0.0.0.0', port=5000, debug=True)

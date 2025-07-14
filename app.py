@@ -6,11 +6,9 @@ import logging
 from io import StringIO
 from urllib.parse import quote
 from typing import Dict, List, Any
-
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from apscheduler.schedulers.background import BackgroundScheduler
-
 from Bio import SeqIO
 from Bio.SeqFeature import (
     FeatureLocation, CompoundLocation,

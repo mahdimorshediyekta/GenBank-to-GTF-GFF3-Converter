@@ -1,6 +1,3 @@
- Dockerfile for GenBank to GTF/GFF3 Converter
-
-# Start from a specific Python version (3.11 slim for smaller image size)
 FROM python:3.11-slim
 
 # Set environment variables to optimize Python in Docker

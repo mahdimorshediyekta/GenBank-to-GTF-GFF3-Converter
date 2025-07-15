@@ -578,6 +578,37 @@ def convert_genbank_data_to_annotation_format(genbank_data: str, output_format: 
 def handle_genbank_conversion():
     """Handles the file upload/paste, conversion, and response."""
 
+        # --- Cloudflare Turnstile Verification ---
+    turnstile_response = request.form.get('cf_turnstile_response')
+    if not turnstile_response:
+        logging.warning("No Cloudflare Turnstile response received.")
+        return jsonify({"success": False, "error": "CAPTCHA challenge not completed."}), 400
+
+    if not CLOUDFLARE_SECRET_KEY:
+        logging.error("Cloudflare Secret Key is not configured on the server.")
+        return jsonify({"success": False, "error": "Server CAPTCHA configuration error."}), 500
+
+    verification_url = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+    verification_data = {
+        "secret": CLOUDFLARE_SECRET_KEY,
+        "response": turnstile_response,
+        "remoteip": request.remote_addr # Optional: for improved fraud detection
+    }
+
+    try:
+        verify_response = requests.post(verification_url, data=verification_data)
+        verify_response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+        verification_result = verify_response.json()
+
+        if not verification_result.get("success"):
+            logging.warning(f"Cloudflare Turnstile verification failed: {verification_result.get('error-codes')}")
+            return jsonify({"success": False, "error": "CAPTCHA verification failed. Please try again."}), 403
+
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error during Cloudflare Turnstile verification request: {e}", exc_info=True)
+        return jsonify({"success": False, "error": "Could not verify CAPTCHA due to a network error."}), 500
+    # --- End Cloudflare Turnstile Verification ---
+
     if 'file' not in request.files and 'genbank_data' not in request.form:
         return jsonify({"success": False, "error": "No GenBank data provided. Please upload a file or paste data."}), 400
 

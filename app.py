@@ -1,4 +1,6 @@
 import os
+import requests
+from dotenv import load_dotenv 
 import uuid
 import time
 import atexit
@@ -14,7 +16,8 @@ from Bio.SeqFeature import (
     FeatureLocation, CompoundLocation,
     BeforePosition, AfterPosition, UnknownPosition
 )
-
+# Load environment variables from .env file
+load_dotenv()
 # Configure logging for better feedback
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(message)s')
 
@@ -63,6 +66,10 @@ def delete_old_files():
 scheduler.add_job(func=delete_old_files, trigger="interval", minutes=5)
 scheduler.start()
 atexit.register(lambda: scheduler.shutdown())
+
+CLOUDFLARE_SECRET_KEY = os.getenv("CLOUDFLARE_SECRET_KEY")
+if not CLOUDFLARE_SECRET_KEY:
+    logging.error("CLOUDFLARE_SECRET_KEY environment variable not set!")
 
 # --- GenBank Conversion Logic ---
 

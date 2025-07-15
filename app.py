@@ -274,7 +274,7 @@ def _process_feature_gff3(feature, seqname: str, source: str, feature_index: int
         "codon_start", "transl_table", "translation", "pseudo", "partial", "exception",
         "gene", "locus_tag", "product", "protein_id", "transcript_id", "db_xref", "note"
     ]
-    if feature_type == "CDS":
+    if feature_type == "CDS" and common_qualifiers.get("note"):
         excluded_qualifiers_gff3.append("note") # NCBI GFF3 often excludes 'note' for CDS
 
     common_qualifiers = _get_common_qualifiers(feature, excluded_qualifiers_gff3)
@@ -454,6 +454,10 @@ def convert_genbank_data_to_annotation_format(genbank_data: str, output_format: 
     gff3_id_map = {} # Generic map for any GFF3 ID generated
     gene_id_bases = {} # Stores base IDs for gene features (seqname, qual_value) -> actual_id
     mRNA_id_bases = {} # Stores base IDs for mRNA features (seqname, qual_value) -> actual_id
+    
+    # Initialize for GTF as well
+    gtf_gene_ids = {}
+    gtf_transcript_ids = {}
 
     try:
         genbank_handle = StringIO(genbank_data)

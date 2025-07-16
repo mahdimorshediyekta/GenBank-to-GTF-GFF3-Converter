@@ -1,6 +1,6 @@
 import os
 import requests
-from dotenv import load_dotenv 
+from dotenv import load_dotenv
 import uuid
 import time
 import atexit
@@ -268,6 +268,10 @@ def _process_feature_gff3(feature, seqname: str, source: str, feature_index: int
                           gff3_id_map: Dict[str, str], gene_id_bases: Dict[Any, str], mRNA_id_bases: Dict[Any, str],
                           current_source_id: str) -> str | None:
     """Processes a single Biopython SeqFeature for GFF3 output."""
+
+    # Initialize common_qualifiers at the beginning
+    common_qualifiers = _get_common_qualifiers(feature)
+
     feature_type = feature.type
 
     start = int(feature.location.start) + 1
@@ -284,6 +288,7 @@ def _process_feature_gff3(feature, seqname: str, source: str, feature_index: int
     if feature_type == "CDS" and common_qualifiers.get("note"):
         excluded_qualifiers_gff3.append("note") # NCBI GFF3 often excludes 'note' for CDS
 
+    # Re-call _get_common_qualifiers with the updated excluded_qualifiers_gff3 list
     common_qualifiers = _get_common_qualifiers(feature, excluded_qualifiers_gff3)
 
     attributes = []
@@ -685,6 +690,4 @@ def serve_index():
     return "GenBank to GTF/GFF3 Converter API is running. Use /api/convert to interact."
 
 if __name__ == '__main__':
-    # For local development, run on port 5000.
-    # IMPORTANT: Set debug=False in production for security and performance.
     app.run(host='0.0.0.0', port=5000, debug=True)

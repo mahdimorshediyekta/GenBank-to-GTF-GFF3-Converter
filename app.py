@@ -23,8 +23,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s: %(m
 
 # --- Configuration ---
 TEMP_DIR = 'temp_files'
-MAX_CONTENT_LENGTH = 20 * 1024 * 1024  # 20 MB, adjust as needed for large GenBank files
-FILE_LIFETIME_SECONDS = 300  # 5 minutes
+MAX_CONTENT_LENGTH = 200 * 1024 * 1024  # 200 MB, adjust as needed for large GenBank files
+FILE_LIFETIME_SECONDS = 90  # 1.5 minutes
 
 # Create the temporary directory if it doesn't exist
 if not os.path.exists(TEMP_DIR):
@@ -35,14 +35,9 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 
 # --- CORS Configuration ---
-# IMPORTANT: Adjust allowed_origins to your actual frontend domain(s)
-# For production, replace 'http://localhost:3000' and 'http://127.0.0.1:5637'
-# with your actual hosted frontend domains (e.g., 'https://yourfrontend.com').
-# Avoid using "*" in production for security reasons.
 allowed_origins = [
-    "https://sciencecodons.com",            # For local frontend development
-    "http://127.0.0.1:5637",            # Another common local dev port
-    # "https://your-genbank-website.com", # Replace with your production domain
+    "https://sciencecodons.com",           
+    "http://127.0.0.1:5637",          
 ]
 CORS(app, resources={r"/api/*": {"origins": allowed_origins}})
 

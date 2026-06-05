@@ -1,8 +1,0 @@
-Flask
-Werkzeug
-gunicorn
-Flask-Cors
-APScheduler
-python-dotenv
-requests
-Biopython==1.83
